@@ -2,30 +2,27 @@
 """
 blackjack.py
 
-Versión extendida del simulador de Blackjack con funciones adicionales:
-- Double down (doblar apuesta en la primera decisión).
-- Surrender (rendición temprana: recuperar mitad de la apuesta).
-- Reshuffle automático cuando quedan pocas cartas en la "shoe".
-- Estrategia de apuestas variable: fija o Martingale.
-- Mantiene modo interactivo y modo de simulación (ruina del jugador).
+Versión extendida del simulador de Blackjack usando representación de cartas como strings:
+- Cartas: 'A','2'..'10','J','Q','K'
+- Conteo correcto de Ases (1 u 11) en Hand
+- Reglas: Double down, Surrender, Reshuffle automático y Martingale
+- Modo interactivo y modo de simulación
 
-Instrucciones: ejecutar python3 blackjack.py
+Nota: este archivo será subido a la rama refactor/game-structure para refactor y PR.
 """
 import random
 
 # -------------------- Baraja y utilidades --------------------
+CARD_RANKS = ['A','2','3','4','5','6','7','8','9','10','J','Q','K']
 
 def crear_mazo():
-    """Devuelve una sola baraja (valores) sin palos."""
-    valores = [1,2,3,4,5,6,7,8,9,10,10,10,10]
-    return valores * 4
-
+    """Devuelve una sola baraja como lista de strings (sin palos)."""
+    return CARD_RANKS * 4
 
 def crear_mazo_partida(n_barajas=1):
     mazo = crear_mazo() * n_barajas
     random.shuffle(mazo)
     return mazo
-
 
 def ensure_mazo(mazo, n_barajas, threshold=15):
     """Reordena la shoe si quedan menos de 'threshold' cartas y devuelve el (posiblemente) nuevo mazo."""
@@ -33,24 +30,32 @@ def ensure_mazo(mazo, n_barajas, threshold=15):
         return crear_mazo_partida(n_barajas)
     return mazo
 
-
 def tomar_carta(mazo):
     if not mazo:
         raise IndexError("El mazo está vacío. Asegúrate de reshuffle antes de tomar.")
     return mazo.pop()
 
-
 # -------------------- Conteo de puntos --------------------
+def valor_de_carta(card):
+    """Mapea una carta string a su valor numérico (A como 1 aquí; 11 se maneja en contar_puntos)."""
+    if card == 'A':
+        return 1
+    if card in ('J','Q','K'):
+        return 10
+    return int(card)
 
 def contar_puntos(mano):
+    """Devuelve (total, es_suave).
+    Se cuentan los As como 11 inicialmente y se reducen a 1 mientras total > 21.
+    """
     total = 0
     aces = 0
     for c in mano:
-        if c == 1:
+        if c == 'A':
             aces += 1
             total += 11
         else:
-            total += c
+            total += valor_de_carta(c)
     reductions = 0
     aces_remaining = aces
     while total > 21 and aces_remaining > 0:
@@ -61,24 +66,15 @@ def contar_puntos(mano):
     es_suave = ace11_count > 0
     return total, es_suave
 
-
 def es_blackjack(mano):
     total, _ = contar_puntos(mano)
     return len(mano) == 2 and total == 21
 
-
 # -------------------- Lógica de juego (una mano) --------------------
-
 def jugar_mano_basica(mazo, n_barajas, limite_jugador, stand_on_soft17=True,
                       allow_double=True, allow_surrender=True, automated=True,
                       reshuffle_threshold=15):
-    """
-    Juega una mano usando el mazo provisto (se hace reshuffle si es necesario).
-    - mazo: lista con cartas (se modifica por referencia).
-    - n_barajas: usadas para rehacer la shoe cuando se necesita reshuffle.
-    - limite_jugador: si automated=True, el jugador hará hit hasta este límite (estrategia simple).
-    - allow_double / allow_surrender: habilita esas opciones.
-    - automated: si False asume decisiones interactivas (no usado aquí; la interacción se maneja por separado).
+    """Juega una mano usando el mazo provisto (se hace reshuffle si es necesario).
 
     Devuelve: (resultado_codigo, apuesta_multiplier, jugador_mano, crupier_mano, mazo)
     resultado_codigo: 'player','dealer','push','player_blackjack','surrender'
@@ -103,24 +99,21 @@ def jugar_mano_basica(mazo, n_barajas, limite_jugador, stand_on_soft17=True,
         return 'dealer', -1, jugador, crupier, mazo
 
     # Decisiones automáticas PRE-HIT (doble / surrender) basadas en heurística simple
-    # Surrender: si permitido y jugador tiene 16 y crupier muestra 10 (heurística común)
     pj, _ = contar_puntos(jugador)
     upcard = crupier[0]
     if allow_surrender and automated:
-        if pj == 16 and upcard == 10:
-            # rendición temprana: se pierde la mitad de la apuesta
+        # Surrender heurística: si tiene 16 y la upcard es una carta de valor 10
+        if pj == 16 and upcard in ('10','J','Q','K'):
             return 'surrender', -0.5, jugador, crupier, mazo
     # Double: si permitido y total inicial 9-11 (heurística simple)
     doubled = False
     if allow_double and automated:
         if pj in (9, 10, 11):
-            # doble: se dobla la apuesta, recibe una carta y se planta
             apuesta_factor = 2.0
             carta = tomar_carta(mazo)
             jugador.append(carta)
             doubled = True
             pj, _ = contar_puntos(jugador)
-            # Si se pasa -> dealer gana
             if pj > 21:
                 return 'dealer', -1 * apuesta_factor, jugador, crupier, mazo
     # Si no se dobló, se aplica la política de hits simple (hit hasta limite)
@@ -131,14 +124,12 @@ def jugar_mano_basica(mazo, n_barajas, limite_jugador, stand_on_soft17=True,
                 jugador.append(tomar_carta(mazo))
             else:
                 break
-            # check bust early
             pj, _ = contar_puntos(jugador)
             if pj > 21:
                 return 'dealer', -1 * apuesta_factor, jugador, crupier, mazo
 
-    # Turno del crupier (si el jugador no se pasó)
+    # Turno del crupier
     pj, _ = contar_puntos(jugador)
-    # Si jugador ya se pasó, crupier no necesita jugar, pero mantendremos la mano para registro
     if pj <= 21:
         while True:
             pc, es_suave_c = contar_puntos(crupier)
@@ -163,20 +154,12 @@ def jugar_mano_basica(mazo, n_barajas, limite_jugador, stand_on_soft17=True,
         return 'dealer', -1 * apuesta_factor, jugador, crupier, mazo
     return 'push', 0, jugador, crupier, mazo
 
-
 # -------------------- Apuesta y simulación --------------------
-
 def apuesta_con_opciones(mazo, n_barajas, limite_jugador, dinero_total, dinero_apostado,
                           stand_on_soft17=True, allow_double=True, allow_surrender=True,
                           betting_strategy='fixed', last_bet=None, reshuffle_threshold=15):
-    """
-    Ejecuta una mano usando el mazo provisto y devuelve (nuevo_dinero, mazo, bet_used, resultado_codigo, jugador, crupier)
-    betting_strategy: 'fixed' o 'martingale'
-    last_bet: monto de la apuesta previa (para Martingale)
-    """
-    # Determinar apuesta a usar
+    """Ejecuta una mano usando el mazo provisto y devuelve (nuevo_dinero, mazo, bet_used, resultado_codigo, jugador, crupier)"""
     if betting_strategy == 'martingale' and last_bet is not None:
-        # En Martingale, si la última apuesta fue una pérdida, la lógica de actualización la maneja el bucle
         bet = last_bet
     else:
         bet = dinero_apostado
@@ -188,24 +171,17 @@ def apuesta_con_opciones(mazo, n_barajas, limite_jugador, dinero_total, dinero_a
                                                                    automated=True,
                                                                    reshuffle_threshold=reshuffle_threshold)
     dinero = dinero_total
-    # factor indica el multiplicador relativo de la apuesta (ej: 1 => gana 1*bet; -1 => pierde bet; 1.5 => blackjack)
-    # Para surrender factor = -0.5
     if factor > 0:
         dinero += bet * factor
     elif factor < 0:
-        dinero += bet * factor  # factor negativo representa pérdida (ej -1 => -bet; -0.5 => -0.5*bet)
-    # push => factor == 0 => no cambio
-
+        dinero += bet * factor
     return dinero, mazo, bet, resultado, jugador, crupier
-
 
 def ruina_del_jugador(n_barajas, limite_jugador, dinero_total, dinero_apostado,
                       max_rondas=10000, stand_on_soft17=True, allow_double=True,
                       allow_surrender=True, betting_strategy='fixed', reshuffle_threshold=15):
-    """
-    Simula rondas hasta que el jugador queda sin dinero o se alcanza max_rondas.
-    Si betting_strategy == 'martingale' la apuesta se duplica tras cada pérdida (hasta el bankroll disponible).
-    Devuelve evolución del dinero y algunas estadísticas.
+    """Simula rondas hasta que el jugador queda sin dinero o se alcanza max_rondas.
+    Martingale: duplica la apuesta tras cada pérdida.
     """
     mazo = crear_mazo_partida(n_barajas)
     dinero = dinero_total
@@ -215,7 +191,6 @@ def ruina_del_jugador(n_barajas, limite_jugador, dinero_total, dinero_apostado,
     current_bet = base_bet
 
     while dinero > 0 and rondas < max_rondas:
-        # evitar apostar más de lo que tenemos
         if current_bet > dinero:
             current_bet = dinero
         dinero_antes = dinero
@@ -226,21 +201,16 @@ def ruina_del_jugador(n_barajas, limite_jugador, dinero_total, dinero_apostado,
             last_bet=current_bet, reshuffle_threshold=reshuffle_threshold)
         evolucion.append(dinero)
         rondas += 1
-        # Ajuste de Martingale: si perdió, doblar la apuesta la siguiente ronda; si ganó o push, reset
         if betting_strategy == 'martingale':
-            # interpretamos pérdida si dinero decreased
             if dinero < dinero_antes:
                 current_bet = min(current_bet * 2, dinero)
             else:
                 current_bet = base_bet
     return evolucion
 
-
 # -------------------- Modo interactivo (con doble y surrender) --------------------
-
 def mostrar_mano(mano):
     return "[" + ", ".join(str(c) for c in mano) + "]"
-
 
 def jugar_interactivo(n_barajas=1, stand_on_soft17=True, allow_double=True, allow_surrender=True,
                       reshuffle_threshold=15):
@@ -253,7 +223,6 @@ def jugar_interactivo(n_barajas=1, stand_on_soft17=True, allow_double=True, allo
     print("Carta visible del crupier:", crupier[0])
 
     # Preguntar por surrender o double antes de tomar hits
-    # Surrender
     if allow_surrender:
         respuesta = input("¿Quieres rendirte y recuperar la mitad de la apuesta? (s/n) ").strip().lower()
         if respuesta == 's':
@@ -322,7 +291,6 @@ def jugar_interactivo(n_barajas=1, stand_on_soft17=True, allow_double=True, allo
         print("Empate (push).")
     return resultado
 
-
 def comparar_manos_interactivo(jugador, crupier):
     pj, _ = contar_puntos(jugador)
     pc, _ = contar_puntos(crupier)
@@ -341,7 +309,6 @@ def comparar_manos_interactivo(jugador, crupier):
     if pc > pj:
         return 'dealer', -1
     return 'push', 0
-
 
 # -------------------- Función principal y ayuda --------------------
 if __name__ == "__main__":
